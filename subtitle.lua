@@ -271,13 +271,12 @@ function PGS:populate(filename)
 			if amount_of_bytes == 0 then return {} end -- don't do anything
 			if index <= #byte_str then
 				index = index + amount_of_bytes
+                assert(index - 1 <= size, string.format("Trying to read beyond the size given (%d) when calling create_iterable()", size))
 				if as_char then
 					return byte_str:sub(index - amount_of_bytes, index - 1)
 				end
 				local res = {}
 				for i=index - amount_of_bytes, index - 1 do
-                    print(amount_of_bytes, size, index, i, byte_str:byte(i,i))
-                    assert(i <= size, string.format("Trying to read beyond the size given (%d) when calling create_iterable()", size))
 					table.insert(res, byte_str:byte(i,i))
 				end
 				return res
