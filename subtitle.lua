@@ -260,6 +260,8 @@ function ASS:populate(filename, language)
 end
 
 local PGS = inheritsFrom(AbstractSubtitle)
+PGS.section_mapper = { PDS = 0x14, ODS = 0x15, PCS = 0x16, WDS = 0x17 }
+
 function PGS:populate(filename)
 	local f = io.open(filename, "rb")
 
@@ -359,6 +361,7 @@ function PGS:populate(filename)
 		for _=1, seg:get('number_comp_objects') do
 			table.insert(seg:get('composition_objects'), parse_window_information_object())
 		end
+		assert(iter(1) == nil, "Iterator should be empty!")
 		return seg
 	end
 
@@ -376,9 +379,9 @@ function PGS:populate(filename)
 			window_seg:add('window_height', wds_it(2))
 			table.insert(seg:get('window_list'), window_seg)
 		end
+		assert(wds_it(1) == nil, "Iterator should be empty!")
 		return seg
 	end
-
 
 	local function parse_pds(segment_size)
 		local pds_it = create_iterable(segment_size)
@@ -395,6 +398,7 @@ function PGS:populate(filename)
 			seg:add('transparency', conv_numeric(pds_it(1))) 				-- Transparency (Alpha value)
 			table.insert(segment:get('palette_entries'), seg)
 		end
+		assert(pds_it(1) == nil, "Iterator should be empty!")
 		return segment
 	end
 
@@ -414,6 +418,7 @@ function PGS:populate(filename)
 		local len = segment:get('object_data_length')
 		-- for some reason 'object_data_length' also counts the 4 bytes used for the width and the height
 		segment:add('object_data', ods_it(len - 4)) 				-- Image data compressed using Run-length Encoding (RLE)
+		assert(ods_it(1) == nil, "Iterator should be empty!")
 		return segment
 	end
 
@@ -428,7 +433,6 @@ function PGS:populate(filename)
 			seg:add('decoding_timestamp', conv_numeric(it(4)) / div) 		-- time decoding picture starts (always 0 in practice)
 			seg:add('segment_type', it(1)[1]) 			-- byte indicating following segment ( see segment_type_map )
 			seg:add('segment_size', conv_numeric(it(2))) 					-- size of following segment
-			-- TODO: check iterator is empty at end of all parsers
 			assert(it(1) == nil, "Iterator should be empty!")
 			return seg
 		end
@@ -437,12 +441,14 @@ function PGS:populate(filename)
 	local header = parse_header(13) -- always size 13
 	local pds_arr, header_segment = {}, {}
 	while header do
+		assert(header:get('magic_number') == 'PG', "Magic number was not 'PG', corrupted sub file!")
 		local segment_type = header:get('segment_type')
 		local segment = segment_type_map[segment_type](header:get('segment_size'))
 		if segment == nil then
 			table.insert(pds_arr, header_segment)
 			header_segment = {}
 		else
+			assert(header_segment[segment_type] == nil, string.format("Segment present twice!\n%s", segment))
 			header_segment[segment_type] = { header = header, segment = segment }
 		end
 		header = parse_header(13)
