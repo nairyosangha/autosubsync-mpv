@@ -462,7 +462,7 @@ function PGS:decode_lre(data)
 	end
 
     local function make_iter()
-        local idx = 1
+        local idx = 0
         return function ()
             idx = idx + 1
             if idx <= #data then
@@ -472,12 +472,21 @@ function PGS:decode_lre(data)
     end
     local iter = make_iter()
 
+	local function erase_indicator_bits(byte)
+		-- indicator is first 2 digits of byte, so flip those to 0
+		local mask = ~(3 << 6) -- 00111111
+		return byte & mask
+	end
+
     local lines = {}
     local segments = {}
     local last_byte = iter()
     while last_byte do
-        local byte = iter()
-        if last_byte == 0 then
+        if last_byte ~= 0 then
+			-- CCCCCCCC (1 pixel in color C)
+            table.insert(segments, { color = last_byte, pixel_count = 1 })
+		else
+        	local byte = iter()
             if byte == 0 then
                 -- last byte == 0 and byte == 0: end of line
                 table.insert(lines, segments)
@@ -490,24 +499,23 @@ function PGS:decode_lre(data)
                 -- - 10 (2): segment ends at next byte (including itself)
                 -- - 11 (3): segment ends byte after next byte (including itself)
                 local pixel_count, color = nil, nil
-                local shift = byte >> 6
+                local shift, result = byte >> 6, erase_indicator_bits(byte)
                 if shift == 0 then -- 00000000 00LLLLLL (L pixels in color 0)
                     color = 0
-                    pixel_count = byte | 0x3F
+                    pixel_count = result
                 elseif shift == 1 then -- 00000000 01LLLLLL LLLLLLLL (L pixels in color 0)
                     color = 0
-                    pixel_count = conv_numeric({ byte | 0x3F, iter() })
+                    local c = { result, iter() }
+                    pixel_count = conv_numeric(c)
                 elseif shift == 2 then -- 00000000 10LLLLLL CCCCCCCC (L pixels in color C)
-                    pixel_count = byte | 0x3F
+                    pixel_count = result
                     color = iter()
                 elseif shift == 3 then -- 00000000 11LLLLLL LLLLLLLL CCCCCCCC (L pixels in color C)
-                    pixel_count = conv_numeric({ byte | 0x3F, iter() })
+                    pixel_count = conv_numeric({ result, iter() })
                     color = iter()
                 end
                 table.insert(segments, { color = color, pixel_count = pixel_count })
             end
-        else
-            table.insert(segments, { color = byte, pixel_count = 1 })
         end
         last_byte = iter()
     end
