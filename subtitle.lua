@@ -438,14 +438,15 @@ function PGS:populate(filename)
 		end
 	end
 
+	local sub = self:create(filename)
 	local header = parse_header(13) -- always size 13
-	local pds_arr, header_segment = {}, {}
+	local header_segment = {}
 	while header do
 		assert(header:get('magic_number') == 'PG', "Magic number was not 'PG', corrupted sub file!")
 		local segment_type = header:get('segment_type')
 		local segment = segment_type_map[segment_type](header:get('segment_size'))
 		if segment == nil then
-			table.insert(pds_arr, header_segment)
+			table.insert(sub.entries, header_segment)
 			header_segment = {}
 		else
 			assert(header_segment[segment_type] == nil, string.format("Segment present twice!\n%s", segment))
@@ -454,7 +455,7 @@ function PGS:populate(filename)
 		header = parse_header(13)
 	end
 	f:close()
-    return pds_arr
+    return sub
 end
 
 function PGS:decode_lre(data)
