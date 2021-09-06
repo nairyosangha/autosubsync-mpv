@@ -394,7 +394,6 @@ function PGS:populate(filename)
 			seg:add('color_difference_blue', conv_numeric(pds_it(1))) 	-- Color Difference Blue (Cb value)
 			seg:add('transparency', conv_numeric(pds_it(1))) 				-- Transparency (Alpha value)
 			table.insert(segment:get('palette_entries'), seg)
-			--print(seg)
 		end
 		return segment
 	end
@@ -409,9 +408,7 @@ function PGS:populate(filename)
 			-- 0x80: First in sequence
 			-- 0xC0: First and last in sequence (0x40 | 0x80)
 		segment:add('last_in_sequence_flag', ods_it(1)[1])
-        local tmp = ods_it(3)
-        for k,v in ipairs(tmp) do print(k,v) end
-		segment:add('object_data_length', conv_numeric(tmp)) 	    -- The length of the RLE data buffer with the compressed image data.
+		segment:add('object_data_length', conv_numeric(ods_it(3))) 	    -- The length of the RLE data buffer with the compressed image data.
 		segment:add('width', conv_numeric(ods_it(2))) 				-- Width of the image
 		segment:add('height', conv_numeric(ods_it(2))) 				-- Height of the image
 		local len = segment:get('object_data_length')
@@ -445,7 +442,6 @@ function PGS:populate(filename)
 		if segment == nil then
 			table.insert(pds_arr, header_segment)
 			header_segment = {}
-            break
 		else
 			header_segment[segment_type] = { header = header, segment = segment }
 		end
