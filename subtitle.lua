@@ -529,6 +529,59 @@ function PGS:decode_lre(data)
     return lines
 end
 
+function PGS:dump_image(idx, filename)
+	assert(idx <= #self.entries, "Invalid index!")
+	local yCbCr_rgb_map = {}
+
+	local ods_section = self.entries[idx][PGS.section_mapper['ODS']]
+	local pds_section = self.entries[idx][PGS.section_mapper['PDS']]
+
+	if ods_section == nil or pds_section == nil then return end
+	local palette_entries = pds_section.segment:get('palette_entries')
+
+	local function yuv_to_rgb(id)
+		--print(id)
+		local function compute()
+			local function pack(x)
+				local packed = x
+				if x < 0 then packed = 0
+				elseif x > 255 then packed = 255
+				else packed = math.floor(packed + 0.5)
+				end
+				return string.char(packed)
+			end
+			-- Fall back on first entry if ID was out of range
+			local p = palette_entries[id+1] or palette_entries[1] -- entries are 0 indexed
+			local y,cb,cr = p:get('luminance'), p:get('color_difference_blue'), p:get('color_difference_red')
+			local r,g,b
+			-- https://www.fourcc.org/fccyvrgb.php
+			r = pack(y + (1.370705 * (cr-128)))
+			g = pack(y - (0.698001 * (cr-128)) - (0.337633 * (cb-128)))
+			b = pack(y + (1.732446 * (cb-128)))
+			return table.concat({r,g,b})
+		end
+		yCbCr_rgb_map[id] = yCbCr_rgb_map[id] or compute()
+		return yCbCr_rgb_map[id]
+	end
+	local image_data = ods_section.segment:get('object_data')
+	local decoded_data = self:decode_lre(image_data)
+	local pixels = {}
+	for _,line in pairs(decoded_data) do
+		local line_arr = {}
+		for _,segment in pairs(line) do
+			for _=1,segment.pixel_count do
+				table.insert(pixels, yuv_to_rgb(segment.color))
+			end
+		end
+		local f = io.open(filename, 'wb')
+		f:write(string.format("%d;%d", ods_section.segment:get('width'), ods_section.segment:get('height')))
+		f:write(table.concat(pixels))
+		f:close()
+	end
+
+
+end
+
 P.AbstractSubtitle = AbstractSubtitle
 P.ASS = ASS
 P.SRT = SRT
