@@ -16,22 +16,23 @@ int main(int argc, char *argv[])
 	}
 	for (int i=1; i < argc; i++) {
 		char *fn = argv[i];
+		FILE *fj = fopen(fn, "rb");
 		int width, height;
 		u_int64_t size = 0;
-		u_int8_t *buffer = NULL;
-		FILE *fj = fopen(fn, "rb");
+		fscanf(fj, "%d;%d\n", &width, &height);
+		printf("%d, %d\n", width, height);
+		u_int8_t *buffer = malloc(4 * width * height * sizeof(u_int8_t));
 		char dest[100]; memset(dest, '\0', 100);
 		strncat(dest, fn, 96);
 		strncat(dest, ".png", 4);
-		fscanf(fj, "%d;%d\n", &width, &height);
-		u_int8_t r, g, b;
-		while (fscanf(fj, "%c%c%c", &r, &g, &b) == 3) {
-			buffer = realloc(buffer, size + 3 * sizeof(u_int8_t));
+		u_int8_t r, g, b, a;
+		while (fscanf(fj, "%c%c%c%c", &r, &g, &b, &a) == 4) {
 			buffer[size + 0] = r;
-			buffer[size + 1] = r;
-			buffer[size + 2] = r;
+			buffer[size + 1] = g;
+			buffer[size + 2] = b;
+			buffer[size + 3] = a;
 			//printf("r: %d, g: %d, b: %d\n", r, g, b);
-			size += 3;
+			size += 4;
 		}
 		printf("[%s]: %ld bytes read\n", fn, size);
 		printf("\tdimensions: %dx%d\n", width, height);
@@ -52,6 +53,7 @@ void setRGB(png_byte *ptr, u_int8_t *rgb)
 	ptr[0] = *(rgb+0);
 	ptr[1] = *(rgb+1);
 	ptr[2] = *(rgb+2);
+	ptr[3] = *(rgb+3);
 }
 
 int writeImage(char* filename, int width, int height, u_int8_t *buffer, char* title)
@@ -95,7 +97,7 @@ int writeImage(char* filename, int width, int height, u_int8_t *buffer, char* ti
 	// Write header (8 bit colour depth)
 	// TODO use RGB with alpha channel
 	png_set_IHDR(png_ptr, info_ptr, width, height,
-			8, PNG_COLOR_TYPE_RGB, PNG_INTERLACE_NONE,
+			8, PNG_COLOR_TYPE_RGBA, PNG_INTERLACE_NONE,
 			PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_BASE);
 
 	if (title != NULL) {
@@ -108,13 +110,13 @@ int writeImage(char* filename, int width, int height, u_int8_t *buffer, char* ti
 
 	png_write_info(png_ptr, info_ptr);
 
-	row = (png_bytep) malloc(3 * width * sizeof(png_byte));
+	row = (png_bytep) malloc(4 * width * sizeof(png_byte));
 
 	int x, y;
 	for (y=0 ; y<height ; y++) {
 		for (x=0 ; x<width ; x++) {
 			//printf("%d\n", 3*(y*width+x));
-			setRGB(&(row[x*3]), &buffer[3*(y*width+x)]);
+			setRGB(&(row[x*4]), &buffer[4*(y*width+x)]);
 		}
 		png_write_row(png_ptr, row);
 	}

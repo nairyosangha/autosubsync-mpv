@@ -261,46 +261,29 @@ end
 
 local PGS = inheritsFrom(AbstractSubtitle)
 PGS.section_mapper = { PDS = 0x14, ODS = 0x15, PCS = 0x16, WDS = 0x17 }
+PGS.yCbCr_rgb_map = {}
 
 function PGS:populate(filename)
 	local f = io.open(filename, "rb")
+	local f_data, f_idx = f:read("a"), 1
 
 	local function create_iterable(size)
 		-- return iterator which takes the amount of bytes that should be returned as parameter
-		local index, byte_str = 1, f:read(size)
-		if byte_str == nil then return nil end
-		return function (amount_of_bytes, as_char)
-			if amount_of_bytes == 0 then return {} end -- don't do anything
+		if f_idx + size > #f_data then return nil end
+		local index, byte_str = 1, f_data:sub(f_idx, f_idx + size - 1)
+		assert(size == #byte_str, string.format("not equal! size (%d) ~= #byte_str (%d)", size, #byte_str))
+		f_idx = f_idx + size
+		return function (amount_of_bytes)
 			if index <= #byte_str then
 				index = index + amount_of_bytes
                 assert(index - 1 <= size, string.format("Trying to read beyond the size given (%d) when calling create_iterable()", size))
-				if as_char then
-					return byte_str:sub(index - amount_of_bytes, index - 1)
-				end
-				local res = {}
-				for i=index - amount_of_bytes, index - 1 do
-					table.insert(res, byte_str:byte(i,i))
-				end
-				return res
+				return string.pack(string.format("=c%d", amount_of_bytes), byte_str:sub(index - amount_of_bytes, index - 1))
 			end
 		end
 	end
 
 	local function conv_numeric(byte_table)
-		local total, bit_shifter = 0, 0
-		for i=#byte_table,1,-1 do
-			total = total + ( byte_table[i] << bit_shifter )
-			bit_shifter = bit_shifter + 8 -- size of byte
-		end
-		return total
-	end
-
-	local function conv_string(byte_table)
-		local stringbuilder = {}
-		for i=1,#byte_table do
-			table.insert(stringbuilder, string.char(byte_table[i]))
-		end
-		return table.concat(stringbuilder)
+		return string.unpack(string.format(">I%d", #byte_table), byte_table)
 	end
 
 	local pgs_segment = {}
@@ -310,10 +293,11 @@ function PGS:populate(filename)
 			local sb = {}
 			table.insert(sb, string.format("------ %s ------", x.name))
 			for _,v in ipairs(x.data) do
-				table.insert(sb, string.format("%-25s %s", v .. ":" , tostring(x.data[v])))
+				local xv = x.data[v]
+				local xv_txt = (type(xv) == 'string' and #xv > 10) and string.format("%d bytes", #xv) or xv
+				table.insert(sb, string.format("%-25s %s", v .. ":", xv_txt))
 			end
 			local sep = {}; for _=1,#sb[1] do table.insert(sep, "-") end
-			--table.insert(sb, table.concat(sep))
 			return table.concat(sb, '\n')
 		end,
 	}
@@ -431,7 +415,7 @@ function PGS:populate(filename)
 			seg:add('magic_number', conv_string(it(2))) 					-- always 'PG'
 			seg:add('presentation_timestamp', conv_numeric(it(4)) / div) 	-- sub picture shown on screen
 			seg:add('decoding_timestamp', conv_numeric(it(4)) / div) 		-- time decoding picture starts (always 0 in practice)
-			seg:add('segment_type', it(1)[1]) 			-- byte indicating following segment ( see segment_type_map )
+			seg:add('segment_type', conv_numeric(it(1))) 			-- byte indicating following segment ( see segment_type_map )
 			seg:add('segment_size', conv_numeric(it(2))) 					-- size of following segment
 			assert(it(1) == nil, "Iterator should be empty!")
 			return seg
@@ -473,7 +457,7 @@ function PGS:decode_lre(data)
         return function ()
             idx = idx + 1
             if idx <= #data then
-				return data[idx]
+				return data:byte(idx,idx)
             end
         end
     end
@@ -531,7 +515,6 @@ end
 
 function PGS:dump_image(idx, filename)
 	assert(idx <= #self.entries, "Invalid index!")
-	local yCbCr_rgb_map = {}
 
 	local ods_section = self.entries[idx][PGS.section_mapper['ODS']]
 	local pds_section = self.entries[idx][PGS.section_mapper['PDS']]
@@ -541,45 +524,39 @@ function PGS:dump_image(idx, filename)
 
 	local function yuv_to_rgb(id)
 		--print(id)
-		local function compute()
-			local function pack(x)
-				local packed = x
-				if x < 0 then packed = 0
-				elseif x > 255 then packed = 255
-				else packed = math.floor(packed + 0.5)
+		local function compute(y, cb, cr, a)
+			local function clamp(x)
+				if x < 0 then return 0
+				elseif x > 255 then return 255
 				end
-				return string.char(packed)
+				return math.floor(x + 0.5)
 			end
-			-- Fall back on first entry if ID was out of range
-			local p = palette_entries[id+1] or palette_entries[1] -- entries are 0 indexed
-			local y,cb,cr = p:get('luminance'), p:get('color_difference_blue'), p:get('color_difference_red')
-			local r,g,b
 			-- https://www.fourcc.org/fccyvrgb.php
-			r = pack(y + (1.370705 * (cr-128)))
-			g = pack(y - (0.698001 * (cr-128)) - (0.337633 * (cb-128)))
-			b = pack(y + (1.732446 * (cb-128)))
-			return table.concat({r,g,b})
+			local r,g,b
+			r = clamp(y + (1.370705 * (cr-128)))
+			g = clamp(y - (0.698001 * (cr-128)) - (0.337633 * (cb-128)))
+			b = clamp(y + (1.732446 * (cb-128)))
+			return string.pack("=BBBB", r, g, b, a)
 		end
-		yCbCr_rgb_map[id] = yCbCr_rgb_map[id] or compute()
-		return yCbCr_rgb_map[id]
+		-- Fall back on first entry if ID was out of range
+		local p = palette_entries[id+1] or palette_entries[1] -- entries are 0 indexed
+		local y,cb,cr,a = p:get('luminance'), p:get('color_difference_blue'), p:get('color_difference_red'), p:get('transparency')
+		local yCbCr_packed = string.pack("=BBBB", y, cb, cr, a)
+		self.yCbCr_rgb_map[yCbCr_packed] = self.yCbCr_rgb_map[yCbCr_packed] or compute(y, cb, cr, a)
+		return self.yCbCr_rgb_map[yCbCr_packed]
 	end
 	local image_data = ods_section.segment:get('object_data')
 	local decoded_data = self:decode_lre(image_data)
 	local pixels = {}
 	for _,line in pairs(decoded_data) do
-		local line_arr = {}
 		for _,segment in pairs(line) do
-			for _=1,segment.pixel_count do
-				table.insert(pixels, yuv_to_rgb(segment.color))
-			end
+			table.insert(pixels, string.rep(yuv_to_rgb(segment.color), segment.pixel_count))
 		end
-		local f = io.open(filename, 'wb')
-		f:write(string.format("%d;%d", ods_section.segment:get('width'), ods_section.segment:get('height')))
-		f:write(table.concat(pixels))
-		f:close()
 	end
-
-
+	local f = io.open(filename, 'wb')
+	f:write(string.format("%d;%d\n", ods_section.segment:get('width'), ods_section.segment:get('height')))
+	f:write(table.concat(pixels))
+	f:close()
 end
 
 P.AbstractSubtitle = AbstractSubtitle
