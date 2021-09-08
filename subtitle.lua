@@ -263,6 +263,14 @@ local PGS = inheritsFrom(AbstractSubtitle)
 PGS.section_mapper = { PDS = 0x14, ODS = 0x15, PCS = 0x16, WDS = 0x17, [0x14] = 'PDS', [0x15] = 'ODS', [0x16] = 'PCS', [0x17] = 'WDS', [0x80] = 'END' }
 PGS.yCbCr_rgb_map = {}
 
+function PGS:toString()
+	local pgs_str = {}
+	for i,entry in ipairs(self.entries) do
+		pgs_str[i] = entry:dump(0)
+	end
+	return table.concat(pgs_str)
+end
+
 function PGS:populate(filename)
 	local f = io.open(filename, "rb")
 	local f_data, f_idx = f:read("a"), 1
@@ -337,9 +345,10 @@ function PGS:populate(filename)
 	end
 
 	function pgs_segment:dump()
+		local function _dump(v) return type(v) == 'string' and v or v:dump() end
 		local x = {}
 		for i,v in ipairs(self.data) do
-			x[i] = v
+			x[i] = _dump(self.data[v])
 		end
 		return table.concat(x)
 	end
@@ -355,10 +364,10 @@ function PGS:populate(filename)
 			segment:add('obj_horizontal_pos', iter(2)) 			-- X offset from the top left pixel of the image on the screen
 			segment:add('obj_vertical_pos', iter(2)) 			-- Y offset from the top left pixel of the image on the screen
 			if segment:get_numeric('obj_cropped_flag') == 0x40 then 	-- these flags are only used if obj_cropped_flag is ON
-				segment:add('obj_cropping_hor_pos', nil) 				-- X offset from the top left pixel of the cropped object in the screen.
-				segment:add('obj_cropping_ver_pos', nil) 				-- Y offset from the top left pixel of the cropped object in the screen.
-				segment:add('obj_cropping_width', nil) 					-- Width of the cropped object in the screen.
-				segment:add('obj_cropping_height_pos', nil) 			-- Height of the cropped object in the screen.
+				segment:add('obj_cropping_hor_pos', iter(2)) 			-- X offset from the top left pixel of the cropped object in the screen.
+				segment:add('obj_cropping_ver_pos', iter(2)) 			-- Y offset from the top left pixel of the cropped object in the screen.
+				segment:add('obj_cropping_width', iter(2)) 				-- Width of the cropped object in the screen.
+				segment:add('obj_cropping_height_pos', iter(2)) 		-- Height of the cropped object in the screen.
 			end
 			return segment
 		end
@@ -404,15 +413,15 @@ function PGS:populate(filename)
 		local segment = pgs_segment.create("Palette Definition Segment")
 		segment:add('palette_id', iter(1))					-- ID of the palette
 		segment:add('palette_version_number', iter(1)) 		-- Version of this palette within the Epoch
-		segment:add('palette_entries', {})
-		for _=1, (segment_size-2)/5 do
+		segment:add('palette_entries', pgs_segment.create("Palette Segments"))
+		for i=1, (segment_size-2)/5 do
 			local seg = pgs_segment.create("Palette Entry")
 			seg:add('palette_entry_id', iter(1)) 			-- Entry number of the palette
 			seg:add('luminance', iter(1)) 					-- Luminance (Y value)
 			seg:add('color_difference_red', iter(1)) 		-- Color Difference Red (Cr value)
 			seg:add('color_difference_blue', iter(1)) 		-- Color Difference Blue (Cb value)
 			seg:add('transparency', iter(1)) 				-- Transparency (Alpha value)
-			table.insert(segment:get('palette_entries'), seg)
+			segment:get('palette_entries'):add(string.format("Palette Entry %d", i), seg)
 		end
 		assert(iter(1) == nil, "Iterator should be empty!")
 		return segment
