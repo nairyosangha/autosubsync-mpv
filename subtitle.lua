@@ -266,10 +266,11 @@ PGS.yCbCr_rgb_map = {}
 function PGS:populate(filename)
 	local f = io.open(filename, "rb")
 	local f_data, f_idx = f:read("a"), 1
+	f:close()
 
 	local function create_iterable(size)
 		-- return iterator which takes the amount of bytes that should be returned as parameter
-		if f_idx + size > #f_data then return nil end
+		if f_idx + size - 1 > #f_data then return nil end
 		local index, byte_str = 1, f_data:sub(f_idx, f_idx + size - 1)
 		assert(size == #byte_str, string.format("not equal! size (%d) ~= #byte_str (%d)", size, #byte_str))
 		f_idx = f_idx + size
@@ -285,6 +286,7 @@ function PGS:populate(filename)
 
 	local pgs_segment = {}
 	local mt_pgt_sgmt = {
+		__name = "PGS SEGMENT",
 		__index = pgs_segment,
 		__tostring = function (x)
 			local sb = {}
@@ -465,7 +467,7 @@ function PGS:populate(filename)
 		end
 		header = parse_header(13)
 	end
-	f:close()
+	table.insert(sub.entries, display_set)
     return sub
 end
 
