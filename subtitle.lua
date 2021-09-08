@@ -263,6 +263,21 @@ local PGS = inheritsFrom(AbstractSubtitle)
 PGS.section_mapper = { PDS = 0x14, ODS = 0x15, PCS = 0x16, WDS = 0x17, [0x14] = 'PDS', [0x15] = 'ODS', [0x16] = 'PCS', [0x17] = 'WDS', [0x80] = 'END' }
 PGS.yCbCr_rgb_map = {}
 
+function PGS:shift_timing(diff_seconds)
+	local k, time_diff = 'presentation_timestamp', math.floor(diff_seconds * 90000)
+	for _, entry in ipairs(self.entries) do
+		for idx, key in ipairs(entry.data) do
+			local segment = entry:get(key)
+			if idx % 2 ~= 0 then
+				print("BEFORE: ", segment:get_numeric(k))
+				segment:update(k, string.pack(">I4", segment:get_numeric(k) + time_diff))
+				print("AFTEr: ", segment:get_numeric(k))
+			end
+		end
+	end
+	return self
+end
+
 function PGS:toString()
 	local pgs_str = {}
 	for i,entry in ipairs(self.entries) do
@@ -318,6 +333,10 @@ function PGS:populate(filename)
 
 	function pgs_segment:add(key, value)
 		table.insert(self.data, key)
+		self.data[key] = value
+	end
+
+	function pgs_segment:update(key, value)
 		self.data[key] = value
 	end
 
