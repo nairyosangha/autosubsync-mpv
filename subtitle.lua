@@ -485,21 +485,14 @@ function PGS:populate(filename)
 end
 
 function PGS:decode_lre(data)
-	local function conv_numeric(byte_table)
-		local total, bit_shifter = 0, 0
-		for i=#byte_table,1,-1 do
-			total = total + ( byte_table[i] << bit_shifter )
-			bit_shifter = bit_shifter + 8 -- size of byte
-		end
-		return total
-	end
+	local byte_array = { string.unpack(string.rep("B", #data), data) }
 
     local function make_iter()
         local idx = 0
         return function ()
             idx = idx + 1
             if idx <= #data then
-				return data:byte(idx,idx)
+				return byte_array[idx]
             end
         end
     end
@@ -538,13 +531,12 @@ function PGS:decode_lre(data)
                     pixel_count = result
                 elseif shift == 1 then -- 00000000 01LLLLLL LLLLLLLL (L pixels in color 0)
                     color = 0
-                    local c = { result, iter() }
-                    pixel_count = conv_numeric(c)
+					pixel_count = (result << 8) | iter()
                 elseif shift == 2 then -- 00000000 10LLLLLL CCCCCCCC (L pixels in color C)
                     pixel_count = result
                     color = iter()
                 elseif shift == 3 then -- 00000000 11LLLLLL LLLLLLLL CCCCCCCC (L pixels in color C)
-                    pixel_count = conv_numeric({ result, iter() })
+					pixel_count = (result << 8) | iter()
                     color = iter()
                 end
                 table.insert(segments, { color = color, pixel_count = pixel_count })
