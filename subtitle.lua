@@ -313,23 +313,27 @@ function PGS:populate(filename)
 		self.data[key] = value
 	end
 
+	function pgs_segment:idx_get(idx, ...)
+		return self:_get({ idx, ... }, function (k) return self.data[self.data[k]] end)
+	end
+
 	function pgs_segment:get(key, ...)
-		local results = { self.data[key] }
-		for i,k in pairs({select(1, ...)}) do
-			results[i+1] = self.data[k]
-		end
-		return table.unpack(results)
+		return self:_get({ key, ... }, function (k) return self.data[k] end)
 	end
 
 	function pgs_segment:get_numeric(key, ...)
 		local function convert(value)
 			return string.unpack(string.format(">I%d", #value), value)
 		end
-		local results = { convert(self.data[key]) }
-		for i,k in pairs({select(1, ...)}) do
-			results[i+1] = convert(self.data[k])
+		return self:_get({ key, ... }, function(k) return convert(self.data[k]) end)
+	end
+
+	function pgs_segment:_get(keys, process_func)
+		local res = {}
+		for i,key in ipairs(keys) do 
+			res[i] = process_func(key)
 		end
-		return table.unpack(results)
+		return table.unpack(res)
 	end
 
 	function pgs_segment:dump()
@@ -567,7 +571,7 @@ function PGS:dump_image(idx, filename)
 			return string.pack("=BBBB", r, g, b, a)
 		end
 		-- Fall back on custom tranparent entry if ID was out of range
-		local p = palette_entries[id+1] -- entries are 0 indexed
+		local p = palette_entries:idx_get(id+1) -- entries are 0 indexed
 		if p == nil then
 			return string.pack("=BBBB", 0, 0, 0, 0)
 		end
