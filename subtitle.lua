@@ -282,9 +282,6 @@ function PGS:populate(filename)
 		end
 	end
 
-	local function conv_numeric(byte_table)
-		return string.unpack(string.format(">I%d", #byte_table), byte_table)
-	end
 
 	local pgs_segment = {}
 	local mt_pgt_sgmt = {
@@ -293,13 +290,11 @@ function PGS:populate(filename)
 			local sb = {}
 			table.insert(sb, string.format("------ %s ------", x.name))
 			for _,v in ipairs(x.data) do
-				local xv, xv_string = x.data[v], 'notset ;c'
+				local xv, xv_string = x.data[v], nil
 				if type(xv) == 'table' then
 					xv_string = "\n\t" .. tostring(xv)
 				elseif type(xv) == 'string' then
-					xv_string = #xv > 10 and string.format("%d bytes", #xv) or xv
-				elseif type(xv) == 'number' then
-					xv_string = string.format("0x%06X\t(%d)", xv, xv)
+					xv_string = #xv > 10 and string.format("%d bytes", #xv) or string.format("0x%06X\t(%d)", x:get_numeric(v), x:get_numeric(v))
 				end
 				table.insert(sb, string.format("%-25s %s", v .. ":", xv_string))
 			end
@@ -316,22 +311,44 @@ function PGS:populate(filename)
 		self.data[key] = value
 	end
 
-	function pgs_segment:get(key)
-		return self.data[key]
+	function pgs_segment:get(key, ...)
+		local results = { self.data[key] }
+		for i,k in pairs({select(1, ...)}) do
+			results[i+1] = self.data[k]
+		end
+		return table.unpack(results)
 	end
 
+	function pgs_segment:get_numeric(key, ...)
+		local function convert(value)
+			return string.unpack(string.format(">I%d", #value), value)
+		end
+		local results = { convert(self.data[key]) }
+		for i,k in pairs({select(1, ...)}) do
+			results[i+1] = convert(self.data[k])
+		end
+		return table.unpack(results)
+	end
+
+	function pgs_segment:dump()
+		local x = {}
+		for i,v in ipairs(self.data) do
+			x[i] = v
+		end
+		return table.concat(x)
+	end
 
 	local function parse_pcs(segment_size)
 		local seg = pgs_segment.create("Presentation Composition Segment")
 		local iter = create_iterable(segment_size) 				-- pcs size = 2+2+1+2+1+1+1+1 = 11
 		local function parse_window_information_object()
 			local segment = pgs_segment.create("Window Information Object")
-			segment:add('object_id', conv_numeric(iter(2))) 			-- ID of ODS segment that defines image to be shown
-			segment:add('window_id', conv_numeric(iter(1))) 			-- ID of the WDS segment to which the image is allocated in the PCS. Up to two images may be assigned to one window
-			segment:add('obj_cropped_flag', conv_numeric(iter(1))) 		-- 0x40: Force display of the cropped image object, 0x00: Off
-			segment:add('obj_horizontal_pos', conv_numeric(iter(2))) 	-- X offset from the top left pixel of the image on the screen
-			segment:add('obj_vertical_pos', conv_numeric(iter(2))) 		-- Y offset from the top left pixel of the image on the screen
-			if segment:get('obj_cropped_flag') == 0x40 then 			-- these flags are only used if obj_cropped_flag is ON
+			segment:add('object_id', iter(2)) 					-- ID of ODS segment that defines image to be shown
+			segment:add('window_id', iter(1)) 					-- ID of the WDS segment to which the image is allocated in the PCS. Up to two images may be assigned to one window
+			segment:add('obj_cropped_flag', iter(1)) 			-- 0x40: Force display of the cropped image object, 0x00: Off
+			segment:add('obj_horizontal_pos', iter(2)) 			-- X offset from the top left pixel of the image on the screen
+			segment:add('obj_vertical_pos', iter(2)) 			-- Y offset from the top left pixel of the image on the screen
+			if segment:get_numeric('obj_cropped_flag') == 0x40 then 	-- these flags are only used if obj_cropped_flag is ON
 				segment:add('obj_cropping_hor_pos', nil) 				-- X offset from the top left pixel of the cropped object in the screen.
 				segment:add('obj_cropping_ver_pos', nil) 				-- Y offset from the top left pixel of the cropped object in the screen.
 				segment:add('obj_cropping_width', nil) 					-- Width of the cropped object in the screen.
@@ -339,17 +356,17 @@ function PGS:populate(filename)
 			end
 			return segment
 		end
-		seg:add('width', conv_numeric(iter(2))) 				-- video width in pixels
-		seg:add('height', conv_numeric(iter(2))) 				-- video height in pixels
-		seg:add('frame_rate', conv_numeric(iter(1))) 			-- always 0x10
-		seg:add('comp_number', conv_numeric(iter(2))) 			-- number of this composition
-		seg:add('comp_state', conv_numeric(iter(1))) 			-- 0x00: Normal, 0x40: Acquisition Point, 0x80: Epoch start
-		seg:add('palette_update_flag', conv_numeric(iter(1))) 	-- boolean describing whether this PCS describes a Palette only Display Update, 0x00: false, 0x80: true
-		seg:add('palette_id', conv_numeric(iter(1))) 			-- ID of palette to be used in Palete only Display Update
-		seg:add('number_comp_objects', conv_numeric(iter(1))) 	-- number of comp objects in this segment
-		if seg:get('number_comp_objects') > 0 then
+		seg:add('width', iter(2)) 				-- video width in pixels
+		seg:add('height', iter(2)) 				-- video height in pixels
+		seg:add('frame_rate', iter(1)) 			-- always 0x10
+		seg:add('comp_number', iter(2)) 		-- number of this composition
+		seg:add('comp_state', iter(1)) 			-- 0x00: Normal, 0x40: Acquisition Point, 0x80: Epoch start
+		seg:add('palette_update_flag', iter(1)) -- boolean describing whether this PCS describes a Palette only Display Update, 0x00: false, 0x80: true
+		seg:add('palette_id', iter(1)) 			-- ID of palette to be used in Palete only Display Update
+		seg:add('number_comp_objects', iter(1)) -- number of comp objects in this segment
+		if seg:get_numeric('number_comp_objects') > 0 then
 			local comp_objects_seg = pgs_segment.create("Composition Objects")
-			for i=1, seg:get('number_comp_objects') do
+			for i=1, seg:get_numeric('number_comp_objects') do
 				comp_objects_seg:add(string.format("Composition Object %d", i), parse_window_information_object())
 			end
 			seg:add('composition_objects', comp_objects_seg)
@@ -359,88 +376,85 @@ function PGS:populate(filename)
 	end
 
 	local function parse_wds(segment_size)
-		local wds_it = create_iterable(segment_size) 				-- wds 1+1+2+2+2+2 = 10 bytes
+		local iter = create_iterable(segment_size) 				-- wds 1+1+2+2+2+2 = 10 bytes
 		local seg = pgs_segment.create("Window Definition Segment")
-		seg:add('number_of_windows', conv_numeric(wds_it(1))) 		-- Number of windows defined in this segment
+		seg:add('number_of_windows', iter(1)) 					-- Number of windows defined in this segment
 		seg:add('window_list', pgs_segment.create("Window List"))
-		--local windows_segment = pgs_segment.create("Window List")
-		for i=1,seg:get('number_of_windows') do
+		for i=1,seg:get_numeric('number_of_windows') do
 			local window_seg = pgs_segment.create("Window Segment")
-			window_seg:add('window_id', conv_numeric(wds_it(1)))
-			window_seg:add('window_hor_pos', conv_numeric(wds_it(2))) 			-- X offset from the top left pixel of the window in the screen.
-			window_seg:add('window_ver_pos', conv_numeric(wds_it(2))) 			-- Y offset from the top left pixel of the window in the screen.
-			window_seg:add('window_width', conv_numeric(wds_it(2)))
-			window_seg:add('window_height', conv_numeric(wds_it(2)))
+			window_seg:add('window_id', iter(1))
+			window_seg:add('window_hor_pos', iter(2)) 			-- X offset from the top left pixel of the window in the screen.
+			window_seg:add('window_ver_pos', iter(2)) 			-- Y offset from the top left pixel of the window in the screen.
+			window_seg:add('window_width', iter(2))
+			window_seg:add('window_height', iter(2))
 			seg:get('window_list'):add(string.format("Window Segment %d", i), window_seg)
 		end
-		assert(wds_it(1) == nil, "Iterator should be empty!")
+		assert(iter(1) == nil, "Iterator should be empty!")
 		return seg
 	end
 
 	local function parse_pds(segment_size)
-		local pds_it = create_iterable(segment_size)
+		local iter = create_iterable(segment_size)
 		local segment = pgs_segment.create("Palette Definition Segment")
-		segment:add('palette_id', conv_numeric(pds_it(1)))				-- ID of the palette
-		segment:add('palette_version_number', conv_numeric(pds_it(1))) 	-- Version of this palette within the Epoch
+		segment:add('palette_id', iter(1))					-- ID of the palette
+		segment:add('palette_version_number', iter(1)) 		-- Version of this palette within the Epoch
 		segment:add('palette_entries', {})
 		for _=1, (segment_size-2)/5 do
 			local seg = pgs_segment.create("Palette Entry")
-			seg:add('palette_entry_id', conv_numeric(pds_it(1))) 			-- Entry number of the palette
-			seg:add('luminance', conv_numeric(pds_it(1))) 				-- Luminance (Y value)
-			seg:add('color_difference_red', conv_numeric(pds_it(1))) 		-- Color Difference Red (Cr value)
-			seg:add('color_difference_blue', conv_numeric(pds_it(1))) 	-- Color Difference Blue (Cb value)
-			seg:add('transparency', conv_numeric(pds_it(1))) 				-- Transparency (Alpha value)
+			seg:add('palette_entry_id', iter(1)) 			-- Entry number of the palette
+			seg:add('luminance', iter(1)) 					-- Luminance (Y value)
+			seg:add('color_difference_red', iter(1)) 		-- Color Difference Red (Cr value)
+			seg:add('color_difference_blue', iter(1)) 		-- Color Difference Blue (Cb value)
+			seg:add('transparency', iter(1)) 				-- Transparency (Alpha value)
 			table.insert(segment:get('palette_entries'), seg)
 		end
-		assert(pds_it(1) == nil, "Iterator should be empty!")
+		assert(iter(1) == nil, "Iterator should be empty!")
 		return segment
 	end
 
 	local function parse_ods(segment_size)
-		local ods_it = create_iterable(segment_size)
+		local iter = create_iterable(segment_size)
 		local segment = pgs_segment.create("Object Definition Segment")
-		segment:add('object_id', conv_numeric(ods_it(2))) 				-- ID of this object
-		segment:add('object_version_number', conv_numeric(ods_it(1))) 	-- Version of this object
+		segment:add('object_id', iter(2)) 				-- ID of this object
+		segment:add('object_version_number', iter(1)) 	-- Version of this object
 		-- If the image is split into a series of consecutive fragments, the last fragment has this flag set. Possible values:
 			-- 0x40: Last in sequence
 			-- 0x80: First in sequence
 			-- 0xC0: First and last in sequence (0x40 | 0x80)
-		segment:add('last_in_sequence_flag', ods_it(1))
-		segment:add('object_data_length', conv_numeric(ods_it(3))) 	    -- The length of the RLE data buffer with the compressed image data.
-		segment:add('width', conv_numeric(ods_it(2))) 				-- Width of the image
-		segment:add('height', conv_numeric(ods_it(2))) 				-- Height of the image
-		local len = segment:get('object_data_length')
+		segment:add('last_in_sequence_flag', iter(1))
+		segment:add('object_data_length', iter(3)) 		-- The length of the RLE data buffer with the compressed image data.
+		segment:add('width', iter(2)) 					-- Width of the image
+		segment:add('height', iter(2)) 					-- Height of the image
+		local len = segment:get_numeric('object_data_length')
 		-- for some reason 'object_data_length' also counts the 4 bytes used for the width and the height
-		segment:add('object_data', ods_it(len - 4)) 				-- Image data compressed using Run-length Encoding (RLE)
-		assert(ods_it(1) == nil, "Iterator should be empty!")
+		segment:add('object_data', iter(len - 4)) 		-- Image data compressed using Run-length Encoding (RLE)
+		assert(iter(1) == nil, "Iterator should be empty!")
 		return segment
 	end
 
 	local segment_type_map = { [0x14] = parse_pds, [0x15] = parse_ods, [0x16] = parse_pcs, [0x17] = parse_wds, [0x80] = function() return nil end }
 	local function parse_header(segment_size)
 		local seg = pgs_segment.create("Display Set Header")
-		local it = create_iterable(segment_size) 							-- header size = 2+4+4+1+2 = 13 bytes
-		if it then
-			local div = 90 													-- timestamp = 90Khz, divide by 90 to have time in milliseconds
-			seg:add('magic_number', it(2)) 									-- always 'PG'
-			seg:add('presentation_timestamp', conv_numeric(it(4)) / div) 	-- sub picture shown on screen
-			seg:add('decoding_timestamp', conv_numeric(it(4)) / div) 		-- time decoding picture starts (always 0 in practice)
-			seg:add('segment_type', conv_numeric(it(1))) 					-- byte indicating following segment ( see segment_type_map )
-			seg:add('segment_size', conv_numeric(it(2))) 					-- size of following segment
-			assert(it(1) == nil, "Iterator should be empty!")
+		local iter = create_iterable(segment_size) 		-- header size = 2+4+4+1+2 = 13 bytes
+		if iter then
+			seg:add('magic_number', iter(2)) 			-- always 'PG'
+			seg:add('presentation_timestamp', iter(4)) 	-- sub picture shown on screen
+			seg:add('decoding_timestamp', iter(4)) 		-- time decoding picture starts (always 0 in practice)
+			seg:add('segment_type', iter(1)) 			-- byte indicating following segment ( see segment_type_map )
+			seg:add('segment_size', iter(2)) 			-- size of following segment
+			assert(iter(1) == nil, "Iterator should be empty!")
 			return seg
 		end
 	end
 
-    for k,v in pairs(PGS.section_mapper) do print(k,v) end
 	local sub = self:create(filename)
 	-- segment consist of header and related data (except for END (0x80) header, which has no extra data)
 	local header, data = parse_header(13), nil
 	local display_set = pgs_segment.create("Display Set 0x00")
 	local ds_fmt = "%s %s" -- e.g.: PDS Header, WDS Definition
 	while header do
-		local size, type_, magic_number = header:get('segment_size'), header:get('segment_type'), header:get('magic_number')
-		assert(magic_number == 'PG', "Magic number was not 'PG', corrupted sub file!")
+		local size, type_ = header:get_numeric('segment_size', 'segment_type')
+		assert(header:get('magic_number') == 'PG', "Magic number was not 'PG', corrupted sub file!")
 		data = segment_type_map[type_](size)
 		display_set:add(ds_fmt:format(PGS.section_mapper[type_], 'Header'), header)
 		if data == nil then
@@ -536,7 +550,6 @@ function PGS:dump_image(idx, filename)
 	local palette_entries = pds_def:get('palette_entries')
 
 	local function yuv_to_rgb(id)
-		--print(id)
 		local function compute(y, cb, cr, a)
 			local function clamp(x)
 				if x < 0 then return 0
@@ -556,7 +569,7 @@ function PGS:dump_image(idx, filename)
 		if p == nil then
 			return string.pack("=BBBB", 0, 0, 0, 0)
 		end
-		local y,cb,cr,a = p:get('luminance'), p:get('color_difference_blue'), p:get('color_difference_red'), p:get('transparency')
+		local y,cb,cr,a = p:get_numeric('luminance', 'color_difference_blue', 'color_difference_red', 'transparency')
 		local yCbCr_packed = string.pack("=BBBB", y, cb, cr, a)
 		self.yCbCr_rgb_map[yCbCr_packed] = self.yCbCr_rgb_map[yCbCr_packed] or compute(y, cb, cr, a)
 		return self.yCbCr_rgb_map[yCbCr_packed]
@@ -570,7 +583,7 @@ function PGS:dump_image(idx, filename)
 		end
 	end
 	local f = io.open(filename, 'wb')
-	f:write(string.pack("=I2I2", ods_def:get('width'), ods_def:get('height')))
+	f:write(string.pack("=I2I2", ods_def:get_numeric('width', 'height')))
 	f:write(table.concat(pixels))
 	f:close()
 end
