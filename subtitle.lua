@@ -570,7 +570,7 @@ function PGS:dump_image(idx, filename)
 		end
 	end
 	local f = io.open(filename, 'wb')
-	f:write(string.format("%d;%d\n", ods_def:get('width'), ods_def:get('height')))
+	f:write(string.pack("=I2I2", ods_def:get('width'), ods_def:get('height')))
 	f:write(table.concat(pixels))
 	f:close()
 end
