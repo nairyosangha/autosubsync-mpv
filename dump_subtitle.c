@@ -32,7 +32,7 @@ int main(int argc, char *argv[])
 			exit(1);
 		}
 		INPUT = fopen(inputFile, "rb");
-		pixelBuffer = malloc(sb.st_size);
+		pixelBuffer = malloc(sb.st_size - 4);
 		fread(&width, 2, 1, INPUT);
 		fread(&height, 2, 1, INPUT);
 		fread(pixelBuffer, sb.st_size - 4, 1, INPUT);
