@@ -155,7 +155,7 @@ local function engine_is_set()
 end
 
 local function extract_to_file(subtitle_track)
-    local codec_ext_map = { subrip = "srt", ass = "ass" }
+    local codec_ext_map = { hdmv_pgs_subtitle = "sup", subrip = "srt", ass = "ass" }
     local ext = codec_ext_map[subtitle_track['codec']]
     if ext == nil then
         return notify(string.format("Error: unsupported codec: %s", subtitle_track['codec']), "error", 3)
@@ -172,6 +172,7 @@ local function extract_to_file(subtitle_track)
         "-vn",
         "-i", mp.get_property("path"),
         "-map", "0:" .. (subtitle_track and subtitle_track['ff-index'] or 's'),
+        "-c:s", "copy",
         "-f", ext,
         temp_sub_fp
     }
@@ -271,7 +272,7 @@ local function sync_to_manual_offset()
     end
 
     local ext = get_extension(file_path)
-    local codec_parser_map = { ass = sub.ASS, subrip = sub.SRT }
+    local codec_parser_map = { ass = sub.ASS, subrip = sub.SRT, hdmv_pgs_subtitle = sub.PGS }
     local parser = codec_parser_map[track['codec']]
     if parser == nil then
         return notify(string.format("Error: unsupported codec: %s", track['codec']), "error", 3)
