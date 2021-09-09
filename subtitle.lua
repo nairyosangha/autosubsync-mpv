@@ -265,16 +265,23 @@ PGS.section_mapper = { PDS = 0x14, ODS = 0x15, PCS = 0x16, WDS = 0x17, [0x14] = 
 PGS.yCbCr_rgb_map = {}
 
 function PGS:shift_timing(diff_seconds)
-	local k, time_diff = 'presentation_timestamp', math.floor(diff_seconds * 90000)
-	for _, entry in ipairs(self.entries) do
-		for idx, key in ipairs(entry.data) do
-			local segment = entry:get(key)
-			if idx % 2 ~= 0 then -- we always get header,segment,header,etc. timestamp is only present on header, so 1,3,etc..
-				segment:update(pts, byte.num_to_bin(segment:get_numeric(pts) + time_diff, 4))
-			end
-		end
-	end
-	return self
+    local dts, pts, time_diff = 'decoding_timestamp', 'presentation_timestamp', math.floor(diff_seconds * 90000)
+    for _, entry in ipairs(self.entries) do
+        for idx, key in ipairs(entry.data) do
+            local segment = entry:get(key)
+            if idx % 2 ~= 0 then -- we always get header,segment,header,etc. timestamp is only present on header, so 1,3,etc..
+                segment:update(pts, byte.num_to_bin(segment:get_numeric(pts) + time_diff, 4))
+                local dts_v = segment:get_numeric(dts)
+                -- while decoding timestamp is of no relevance to determine when sub should be displayed
+                -- and while it's often 0
+                -- it's important that it's not greater than the pts, so if it's non 0, adjust it as well
+                if dts_v ~= 0 then 
+                    segment:update(dts, byte.num_to_bin(segment:get_numeric(dts) + time_diff, 4))
+                end
+            end
+        end
+    end
+    return self
 end
 
 function PGS:toString()
