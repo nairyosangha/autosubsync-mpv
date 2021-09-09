@@ -6,7 +6,7 @@
 #include <string.h>
 
 void setRGB(png_byte *ptr, u_int8_t *rgb_ptr);
-int writeImage(char* filename, u_int16_t width, u_int16_t height, u_int8_t *buffer, char* title);
+int writeImage(char* filename, u_int8_t *buffer, char* title);
 
 
 int main(int argc, char *argv[])
@@ -32,13 +32,11 @@ int main(int argc, char *argv[])
 			exit(1);
 		}
 		INPUT = fopen(inputFile, "rb");
-		pixelBuffer = malloc(sb.st_size - 4);
-		fread(&width, 2, 1, INPUT);
-		fread(&height, 2, 1, INPUT);
-		fread(pixelBuffer, sb.st_size - 4, 1, INPUT);
+		pixelBuffer = malloc(sb.st_size);
+		fread(pixelBuffer, sb.st_size, 1, INPUT);
 
 		printf("[%s]: %ld bytes read --> saving to [%s]\n", inputFile, sb.st_size, outputFile);
-		if (writeImage(outputFile, width, height, pixelBuffer, "sub image")) {
+		if (writeImage(outputFile, pixelBuffer, "sub image")) {
 			goto cleanup;
 			return 1;
 		}
@@ -55,13 +53,17 @@ void setRGB(png_byte *ptr, u_int8_t *rgb)
 		ptr[i] = *(rgb+i);
 }
 
-int writeImage(char* filename, u_int16_t width, u_int16_t height, u_int8_t *pixelBuffer, char* title)
+int writeImage(char* filename, u_int8_t *pixelBuffer, char* title)
 {
 	int code = 1, bytes_per_pixel = 4;
 	FILE *fp = NULL;
 	png_structp png_ptr = NULL;
 	png_infop info_ptr = NULL;
 	png_bytep row = NULL;
+	// first 4 bytes of pixelbuffer are width and height
+	u_int16_t width = (*(pixelBuffer+0) << 8 ) | *(pixelBuffer+1);
+	u_int16_t height = (*(pixelBuffer+2) << 8 ) | *(pixelBuffer+3);
+	pixelBuffer += 4;
 	
 	fp = fopen(filename, "wb");
 	if (!fp) {

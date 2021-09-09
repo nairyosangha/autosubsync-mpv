@@ -1,3 +1,4 @@
+local byte = require("byte")
 local P = {}
 
 local TimeStamp = {}
@@ -268,10 +269,8 @@ function PGS:shift_timing(diff_seconds)
 	for _, entry in ipairs(self.entries) do
 		for idx, key in ipairs(entry.data) do
 			local segment = entry:get(key)
-			if idx % 2 ~= 0 then
-				print("BEFORE: ", segment:get_numeric(k))
-				segment:update(k, string.pack(">I4", segment:get_numeric(k) + time_diff))
-				print("AFTEr: ", segment:get_numeric(k))
+			if idx % 2 ~= 0 then -- we always get header,segment,header,etc. timestamp is only present on header, so 1,3,etc..
+				segment:update(pts, byte.num_to_bin(segment:get_numeric(pts) + time_diff, 4))
 			end
 		end
 	end
@@ -288,7 +287,7 @@ end
 
 function PGS:populate(filename)
 	local f = io.open(filename, "rb")
-	local f_data, f_idx = f:read("a"), 1
+	local f_data, f_idx = f:read("*a"), 1
 	f:close()
 
 	local function create_iterable(size)
@@ -301,11 +300,10 @@ function PGS:populate(filename)
 			if index <= #byte_str then
 				index = index + amount_of_bytes
                 assert(index - 1 <= size, string.format("Trying to read beyond the size given (%d) when calling create_iterable()", size))
-				return string.pack(string.format("=c%d", amount_of_bytes), byte_str:sub(index - amount_of_bytes, index - 1))
+				return byte_str:sub(index - amount_of_bytes, index - 1)
 			end
 		end
 	end
-
 
 	local pgs_segment = {}
 	local mt_pgt_sgmt = {
@@ -349,10 +347,7 @@ function PGS:populate(filename)
 	end
 
 	function pgs_segment:get_numeric(key, ...)
-		local function convert(value)
-			return string.unpack(string.format(">I%d", #value), value)
-		end
-		return self:_get({ key, ... }, function(k) return convert(self.data[k]) end)
+		return self:_get({ key, ... }, function(k) return byte.bin_to_num(self.data[k]) end)
 	end
 
 	function pgs_segment:_get(keys, process_func)
@@ -504,14 +499,13 @@ function PGS:populate(filename)
 end
 
 function PGS:decode_lre(data)
-	local byte_array = { string.unpack(string.rep("B", #data), data) }
 
     local function make_iter()
         local idx = 0
         return function ()
             idx = idx + 1
             if idx <= #data then
-				return byte_array[idx]
+				return data:byte(idx, idx)
             end
         end
     end
@@ -519,8 +513,8 @@ function PGS:decode_lre(data)
 
 	local function erase_indicator_bits(byte)
 		-- indicator is first 2 digits of byte, so flip those to 0
-		local mask = ~(3 << 6) -- 00111111
-		return byte & mask
+		local mask = bit32.bnot(bit32.lshift(3, 6)) -- 00111111
+		return bit32.band(byte, mask)
 	end
 
     local lines = {}
@@ -544,18 +538,18 @@ function PGS:decode_lre(data)
                 -- - 10 (2): segment ends at next byte (including itself)
                 -- - 11 (3): segment ends byte after next byte (including itself)
                 local pixel_count, color = nil, nil
-                local shift, result = byte >> 6, erase_indicator_bits(byte)
+                local shift, result = bit32.rshift(byte, 6), erase_indicator_bits(byte)
                 if shift == 0 then -- 00000000 00LLLLLL (L pixels in color 0)
                     color = 0
                     pixel_count = result
                 elseif shift == 1 then -- 00000000 01LLLLLL LLLLLLLL (L pixels in color 0)
                     color = 0
-					pixel_count = (result << 8) | iter()
+					pixel_count = bit32.bor(bit32.lshift(result, 8), iter())
                 elseif shift == 2 then -- 00000000 10LLLLLL CCCCCCCC (L pixels in color C)
                     pixel_count = result
                     color = iter()
                 elseif shift == 3 then -- 00000000 11LLLLLL LLLLLLLL CCCCCCCC (L pixels in color C)
-					pixel_count = (result << 8) | iter()
+					pixel_count = bit32.bor(bit32.lshift(result, 8), iter())
                     color = iter()
                 end
                 table.insert(segments, { color = color, pixel_count = pixel_count })
@@ -588,15 +582,15 @@ function PGS:dump_image(idx, filename)
 			r = clamp(y + (1.370705 * (cr-128)))
 			g = clamp(y - (0.698001 * (cr-128)) - (0.337633 * (cb-128)))
 			b = clamp(y + (1.732446 * (cb-128)))
-			return string.pack("=BBBB", r, g, b, a)
+			return byte.bytes_to_bin(r, g, b, a)
 		end
 		-- Fall back on custom tranparent entry if ID was out of range
 		local p = palette_entries:idx_get(id+1) -- entries are 0 indexed
 		if p == nil then
-			return string.pack("=BBBB", 0, 0, 0, 0)
+			return byte.num_to_bin(0, 4)
 		end
 		local y,cb,cr,a = p:get_numeric('luminance', 'color_difference_blue', 'color_difference_red', 'transparency')
-		local yCbCr_packed = string.pack("=BBBB", y, cb, cr, a)
+		local yCbCr_packed = byte.bytes_to_bin(y, cb, cr, a)
 		self.yCbCr_rgb_map[yCbCr_packed] = self.yCbCr_rgb_map[yCbCr_packed] or compute(y, cb, cr, a)
 		return self.yCbCr_rgb_map[yCbCr_packed]
 	end
@@ -609,7 +603,7 @@ function PGS:dump_image(idx, filename)
 		end
 	end
 	local f = io.open(filename, 'wb')
-	f:write(string.pack("=I2I2", ods_def:get_numeric('width', 'height')))
+	f:write(byte.nums_to_bin(2, ods_def:get_numeric('width', 'height')))
 	f:write(table.concat(pixels))
 	f:close()
 end
