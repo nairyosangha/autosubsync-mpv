@@ -297,18 +297,26 @@ function PGS:populate(filename)
 	local f_data, f_idx = f:read("*a"), 1
 	f:close()
 
+	-- return iterator which takes the amount of bytes that should be returned as parameter
 	local function create_iterable(size)
-		-- return iterator which takes the amount of bytes that should be returned as parameter
-		if f_idx + size - 1 > #f_data then return nil end
-		local index, byte_str = 1, f_data:sub(f_idx, f_idx + size - 1)
-		assert(size == #byte_str, string.format("not equal! size (%d) ~= #byte_str (%d)", size, #byte_str))
+		if f_idx + size -1 > #f_data then
+            return nil
+        end
+        local data = f_data:sub(f_idx, f_idx + size - 1)
+		assert(size == #data, string.format("not equal! size (%d) ~= #data (%d)", size, #data))
+        local last_idx, idx = 0, 1
 		f_idx = f_idx + size
 		return function (amount_of_bytes)
-			if index <= #byte_str then
-				index = index + amount_of_bytes
-                assert(index - 1 <= size, string.format("Trying to read beyond the size given (%d) when calling create_iterable()", size))
-				return byte_str:sub(index - amount_of_bytes, index - 1)
-			end
+            -- when amount_of_bytes is nil, then all available data will be returned
+            if amount_of_bytes == nil then
+                last_idx, idx = idx, #data + 1
+                return data:sub(last_idx)
+            end
+            last_idx, idx = idx, idx + amount_of_bytes
+            if idx - 1 <= #data then
+                assert(idx -1<= size, string.format("Trying to read beyond (%d) the size given (%d) when calling create_iterable()", idx, size))
+                return data:sub(last_idx, idx-1)
+            end
 		end
 	end
 
@@ -337,6 +345,8 @@ function PGS:populate(filename)
 	end
 
 	function pgs_segment:add(key, value)
+        -- ODS segment can be present twice in one Display Segment, in that case, append a 2 prevent overwriting data
+        key = self.data[key] and key .. '2' or key
 		table.insert(self.data, key)
 		self.data[key] = value
 	end
@@ -449,24 +459,32 @@ function PGS:populate(filename)
 	end
 
 	local function parse_ods(segment_size)
-		local iter = create_iterable(segment_size)
-		local segment = pgs_segment.create("Object Definition Segment")
-		segment:add('object_id', iter(2)) 				-- ID of this object
-		segment:add('object_version_number', iter(1)) 	-- Version of this object
-		-- If the image is split into a series of consecutive fragments, the last fragment has this flag set. Possible values:
-			-- 0x40: Last in sequence
-			-- 0x80: First in sequence
-			-- 0xC0: First and last in sequence (0x40 | 0x80)
-		segment:add('last_in_sequence_flag', iter(1))
-		segment:add('object_data_length', iter(3)) 		-- The length of the RLE data buffer with the compressed image data.
-		segment:add('width', iter(2)) 					-- Width of the image
-		segment:add('height', iter(2)) 					-- Height of the image
-		local len = segment:get_numeric('object_data_length')
-		-- for some reason 'object_data_length' also counts the 4 bytes used for the width and the height
-		segment:add('object_data', iter(len - 4)) 		-- Image data compressed using Run-length Encoding (RLE)
-		assert(iter(1) == nil, "Iterator should be empty!")
-		return segment
-	end
+        local last, first_last = 0x40, 0xC0
+        local iter = create_iterable(segment_size)
+        local segment = pgs_segment.create("Object Definition Segment")
+        segment:add('object_id', iter(2))               -- ID of this object
+        segment:add('object_version_number', iter(1))   -- Version of this object
+        -- If the image is split into a series of consecutive fragments, the last fragment has this flag set. Possible values:
+            -- 0x40: Last in sequence
+            -- 0x80: First in sequence
+            -- 0xC0: First and last in sequence (0x40 | 0x80)
+        segment:add('last_in_sequence_flag', iter(1))
+        local flag = segment:get_numeric('last_in_sequence_flag')
+        if flag ~= last then
+            segment:add('object_data_length', iter(3))      -- The length of the RLE data buffer with the compressed image data.
+            segment:add('width', iter(2))                   -- Width of the image
+            segment:add('height', iter(2))                  -- Height of the image
+        end
+        if flag == first_last then
+            local len = segment:get_numeric('object_data_length')
+            -- for some reason 'object_data_length' also counts the 4 bytes used for the width and the height
+            segment:add('object_data', iter(len - 4))       -- Image data compressed using Run-length Encoding (RLE)
+        else
+            segment:add('object_data', iter())              -- Image data compressed using Run-length Encoding (RLE)
+        end
+        assert(iter(1) == nil, "Iterator should be empty!")
+        return segment
+    end
 
 	local segment_type_map = { [0x14] = parse_pds, [0x15] = parse_ods, [0x16] = parse_pcs, [0x17] = parse_wds, [0x80] = function() return nil end }
 	local function parse_header(segment_size)
@@ -602,6 +620,10 @@ function PGS:dump_image(idx, filename)
 		return self.yCbCr_rgb_map[yCbCr_packed]
 	end
 	local image_data = ods_def:get('object_data')
+    -- some images are too big to fit in one segment, so the next one needs to be appended
+    if ods_def:get_numeric('last_in_sequence_flag') == 0x80 then
+        image_data = image_data .. self.entries[idx]:get("ODS Definition2"):get('object_data')
+    end
 	local decoded_data = self:decode_lre(image_data)
 	local pixels = {}
 	for _,line in pairs(decoded_data) do
